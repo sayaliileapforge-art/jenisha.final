@@ -1,0 +1,176 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/admin_users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role == "super_admin";
+    }
+
+    function isAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/admin_users/$(request.auth.uid));
+    }
+
+    // ================= ADMIN USERS =================
+    match /admin_users/{adminId} {
+      allow read: if isAdmin();
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ================= AGENT USERS =================
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+
+      // Users can update their own doc but cannot increase their own walletBalance.
+      // Admins can update any user (approve/reject/recharge).
+      // Commission path: any authenticated user may increment walletBalance on another
+      // agent's doc, but ONLY the walletBalance and lastCommissionAt fields may change
+      // and the balance must go up (not down).
+      allow update: if isAdmin() ||
+        (isAuthenticated() && request.auth.uid == userId &&
+          (!('walletBalance' in request.resource.data) ||
+           !('walletBalance' in resource.data) ||
+           request.resource.data.walletBalance <= resource.data.walletBalance)) ||
+        (isAuthenticated() &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['walletBalance', 'lastCommissionAt']) &&
+          'walletBalance' in resource.data &&
+          request.resource.data.walletBalance > resource.data.walletBalance);
+
+      allow delete: if isAdmin();
+
+      match /documents/{documentId} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+
+    // ================= CATEGORIES =================
+    match /categories/{doc} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    match /serviceCategories/{doc} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ================= SERVICES =================
+    match /services/{doc} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ================= APPLICATIONS =================
+    match /applications/{doc} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /serviceApplications/{doc} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /service_applications/{doc} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // ================= DOCUMENT FIELDS =================
+    match /document_requirements/{doc} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    match /service_document_fields/{doc} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ================= BANNERS =================
+    match /banners/{doc} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ================= ANNOUNCEMENTS =================
+    match /announcements/{doc} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ================= SETTINGS =================
+    match /settings/{doc} {
+      // Authenticated app users need to be able to read public settings
+      // (e.g., commissionPercentage is read by Flutter for display).
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+
+    // ================= TRANSACTIONS =================
+    match /transactions/{doc} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+    }
+
+    match /agent_payments/{doc} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+    }
+
+    match /walletTransactions/{doc} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+    }
+
+    // ================= WALLET TRANSACTIONS (snake_case) =================
+    match /wallet_transactions/{doc} {
+      // Admins see all; authenticated users see their own payment or commission records
+      allow read: if isAdmin() ||
+        (isAuthenticated() &&
+          (resource.data.userId == request.auth.uid ||
+           resource.data.agentId == request.auth.uid));
+      // Cloud Function (Admin SDK) creates commission records; app creates payment records
+      allow create: if isAuthenticated();
+      // Only admins may modify or delete transaction records
+      allow update, delete: if isAdmin();
+    }
+
+    // ================= APPOINTMENT SERVICES =================
+    match /appointment_services/{doc} {
+      allow read: if true;
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ================= APPOINTMENT FIELDS =================
+    match /appointment_fields/{serviceId} {
+      allow read: if true;
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ================= APPOINTMENTS =================
+    match /appointments/{doc} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAdmin() ||
+        (isAuthenticated() && request.auth.uid == resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+  }
+}
